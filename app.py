@@ -107,7 +107,7 @@ def make_summary(df: pd.DataFrame) -> str:
         f"Missing cells: {int(df.isna().sum().sum()):,}",
         "",
         "Column summary:",
-        df.describe(include="all", datetime_is_numeric=True).transpose().to_string(),
+        df.describe(include="all").transpose().to_string(),
         "",
         "Missing values by column:",
         df.isna().sum().to_string(),
@@ -246,29 +246,33 @@ with tab_charts:
     chart_cols = st.columns(3)
     if chart_type == "Bar chart":
         x = chart_cols[0].selectbox("Category / X axis", all_cols, key="bar_x")
-        y_choices = numeric_cols or all_cols
-        y = chart_cols[1].selectbox("Value / Y axis", y_choices, key="bar_y")
-        agg_options = ["Sum", "Mean", "Count"] if numeric_cols else ["Count"]
+        # Never aggregate the grouping column by itself: that creates a duplicate
+        # column name during reset_index (for example customer_id).
+        y_choices = [col for col in numeric_cols if col != x]
+        if not y_choices:
+            st.info("Choose a different X-axis column, or use Count aggregation.")
+            y_choices = [col for col in numeric_cols if col != x]
+        y = chart_cols[1].selectbox(
+            "Value / Y axis",
+            y_choices if y_choices else [col for col in all_cols if col != x] or all_cols,
+            key="bar_y",
+        )
+        agg_options = ["Sum", "Mean", "Count"]
         agg = chart_cols[2].selectbox("Aggregation", agg_options, key="bar_agg")
         if agg == "Count":
-            plot_df = filtered.groupby(x, dropna=False).size().reset_index(name="Count")
+            plot_df = filtered.groupby(x, dropna=False, observed=True).size().reset_index(name="Count")
             fig = px.bar(plot_df, x=x, y="Count", title=f"Count by {x}")
+        elif x == y:
+            st.warning("Choose different columns for the X-axis and Y-axis, or select Count aggregation.")
+            fig = None
         else:
-            
-if x == y:
-    st.warning("Choose different columns for the chart's X-axis and Y-axis.")
-else:
-    vals = (
-        filtered.groupby(x, dropna=False, as_index=False)[y]
-        .agg("sum" if agg == "Sum" else "mean")
-    )
-
-    st.plotly_chart(
-        px.bar(vals, x=x, y=y, title=f"{agg} of {y} by {x}"),
-        use_container_width=True
-    )
-
-            fig = px.bar(vals, x=x, y=y, title=f"{agg} of {y} by {x}")
+            vals = (
+                filtered.groupby(x, dropna=False, observed=True)[y]
+                .agg("sum" if agg == "Sum" else "mean")
+                .rename("chart_value")
+                .reset_index()
+            )
+            fig = px.bar(vals, x=x, y="chart_value", title=f"{agg} of {y} by {x}")
     elif chart_type == "Line chart":
         x = chart_cols[0].selectbox("X axis", date_cols + numeric_cols + categorical_cols, key="line_x")
         y = chart_cols[1].selectbox("Y axis", numeric_cols or all_cols, key="line_y")
@@ -380,19 +384,80 @@ with tab_quality:
 
 with tab_export:
     st.markdown("#### Export your analysis")
-    st.write("Downloads use the currently filtered rows.")
-    st.download_button("⬇️ Download filtered data (CSV)", data=csv_bytes(filtered),
-                       file_name="vizcraft_filtered_data.csv", mime="text/csv")
+    st.write("Downloads include the currently filtered rows and are generated when you click a button.")
+
+    # Prepare exports safely before creating download buttons.
+    filtered_csv = csv_bytes(filtered)
     summary_text = make_summary(filtered)
-    st.download_button("⬇️ Download analysis summary (TXT)", data=summary_text.encode("utf-8"),
-                       file_name="vizcraft_analysis_summary.txt", mime="text/plain")
+
     report_df = pd.DataFrame({
         "Metric": ["Rows", "Columns", "Missing cells", "Duplicate rows"],
-        "Value": [len(filtered), len(filtered.columns), int(filtered.isna().sum().sum()), int(filtered.duplicated().sum())]
+        "Value": [
+            len(filtered),
+            len(filtered.columns),
+            int(filtered.isna().sum().sum()),
+            int(filtered.duplicated().sum()),
+        ],
     })
-    st.download_button("⬇️ Download KPI report (CSV)", data=report_df.to_csv(index=False).encode("utf-8"),
-                       file_name="vizcraft_kpi_report.csv", mime="text/csv")
-    st.info("For a portable report, save the summary and KPI CSV alongside your exported dataset.")
+
+    quality_df = pd.DataFrame({
+        "Column": filtered.columns.astype(str),
+        "Data type": [str(filtered[c].dtype) for c in filtered.columns],
+        "Non-null values": [int(filtered[c].notna().sum()) for c in filtered.columns],
+        "Missing values": [int(filtered[c].isna().sum()) for c in filtered.columns],
+        "Missing percent": [round(float(filtered[c].isna().mean() * 100), 2) for c in filtered.columns],
+        "Unique values": [int(filtered[c].nunique(dropna=True)) for c in filtered.columns],
+    })
+
+    stats_df = filtered.describe(include="all").transpose()
+    stats_csv = stats_df.to_csv().encode("utf-8-sig")
+
+    left, right = st.columns(2)
+    with left:
+        st.download_button(
+            "⬇️ Download filtered data (CSV)",
+            data=filtered_csv,
+            file_name="vizcraft_filtered_data.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_filtered_csv",
+        )
+        st.download_button(
+            "⬇️ Download analysis summary (TXT)",
+            data=summary_text.encode("utf-8"),
+            file_name="vizcraft_analysis_summary.txt",
+            mime="text/plain",
+            use_container_width=True,
+            key="download_summary_txt",
+        )
+        st.download_button(
+            "⬇️ Download KPI report (CSV)",
+            data=report_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="vizcraft_kpi_report.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_kpi_csv",
+        )
+
+    with right:
+        st.download_button(
+            "⬇️ Download column quality report (CSV)",
+            data=quality_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="vizcraft_data_quality_report.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_quality_csv",
+        )
+        st.download_button(
+            "⬇️ Download statistical summary (CSV)",
+            data=stats_csv,
+            file_name="vizcraft_statistical_summary.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_stats_csv",
+        )
+
+    st.info("Tip: These files export the current filtered dataset. UTF-8 with BOM is used for CSV files to improve compatibility with Excel.")
 
 st.divider()
 st.caption("VizCraft · Built with Python, Streamlit, Pandas, NumPy and Plotly · Demo data is reproducible (seed 42).")

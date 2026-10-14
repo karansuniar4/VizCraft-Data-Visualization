@@ -1,6 +1,6 @@
 # VizCraft — Interactive Data Visualization Dashboard
 
-**CodSoft Data Analytics Internship · Task 3**
+**CodSoft Data Analytics · Task 3**
 
 VizCraft is a beginner-friendly Streamlit dashboard for exploring CSV data, building interactive charts, checking data quality, and exporting analysis results. It includes a reproducible demo dataset, so you can run it without downloading any external files.
 

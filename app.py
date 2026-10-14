@@ -254,7 +254,20 @@ with tab_charts:
             plot_df = filtered.groupby(x, dropna=False).size().reset_index(name="Count")
             fig = px.bar(plot_df, x=x, y="Count", title=f"Count by {x}")
         else:
-            vals = filtered.groupby(x, dropna=False)[y].agg("sum" if agg == "Sum" else "mean").reset_index()
+            
+if x == y:
+    st.warning("Choose different columns for the chart's X-axis and Y-axis.")
+else:
+    vals = (
+        filtered.groupby(x, dropna=False, as_index=False)[y]
+        .agg("sum" if agg == "Sum" else "mean")
+    )
+
+    st.plotly_chart(
+        px.bar(vals, x=x, y=y, title=f"{agg} of {y} by {x}"),
+        use_container_width=True
+    )
+
             fig = px.bar(vals, x=x, y=y, title=f"{agg} of {y} by {x}")
     elif chart_type == "Line chart":
         x = chart_cols[0].selectbox("X axis", date_cols + numeric_cols + categorical_cols, key="line_x")
